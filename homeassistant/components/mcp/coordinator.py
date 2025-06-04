@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 import datetime
 import logging
 
+from anyio import BrokenResourceError
 import httpx
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
@@ -53,6 +54,9 @@ async def mcp_client(
             yield session
     except ExceptionGroup as err:
         _LOGGER.debug("Error creating MCP client: %s", err)
+        for exc in err.exceptions:
+            if not isinstance(exc, BrokenResourceError):
+                raise exc from err
         raise err.exceptions[0] from err
 
 
