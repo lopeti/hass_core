@@ -43,7 +43,11 @@
     "step": {
       "init": {
         "data": {
+          "url": "[%key:common::config_flow::data::url%]",
           "transport": "Transport"
+        },
+        "data_description": {
+          "url": "The remote MCP server URL. Use the \u201c/sse\u201d endpoint when the SSE transport is selected, for example http://example/sse. For Streamable HTTP provide the appropriate endpoint for that transport."
         }
       }
     }

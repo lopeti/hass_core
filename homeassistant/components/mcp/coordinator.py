@@ -14,6 +14,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel
 import voluptuous as vol
 from voluptuous_openapi import convert_to_voluptuous
+from yarl import URL
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_URL
@@ -47,7 +48,14 @@ async def mcp_client(
     that the coordinator has a single object to manage.
     """
     headers: dict[str, str] = {}
-    if token_manager is not None:
+    url_obj = URL(url)
+    query = dict(url_obj.query)
+    api_key = query.pop("api_key", None)
+    url = str(url_obj.with_query(query))
+    if api_key is not None:
+        headers["Authorization"] = f"Bearer {api_key}"
+        _LOGGER.debug("MCP client using API key from query string")
+    elif token_manager is not None:
         token = await token_manager()
         headers["Authorization"] = f"Bearer {token}"
 
@@ -68,6 +76,12 @@ async def mcp_client(
         )
 
     try:
+        _LOGGER.debug(
+            "MCP connection test: url=%s transport=%s headers=%s",
+            url,
+            transport,
+            list(headers.keys()),
+        )
         if transport == TRANSPORT_STREAMABLE_HTTP:
             async with (
                 streamablehttp_client(
@@ -77,7 +91,10 @@ async def mcp_client(
                 ) as streams,
                 ClientSession(*streams[:2]) as session,
             ):
-                await session.initialize()
+                response = await session.initialize()
+                _LOGGER.debug(
+                    "MCP server info for %s: name=%s", url, response.serverInfo.name
+                )
                 yield session
         else:
             async with (
@@ -88,7 +105,10 @@ async def mcp_client(
                 ) as streams,
                 ClientSession(*streams) as session,
             ):
-                await session.initialize()
+                response = await session.initialize()
+                _LOGGER.debug(
+                    "MCP server info for %s: name=%s", url, response.serverInfo.name
+                )
                 yield session
     except ExceptionGroup as err:
         _LOGGER.debug("Error creating MCP client: %s", err)
