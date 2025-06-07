@@ -21,6 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import llm
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import ssl as hass_ssl
 from homeassistant.util.json import JsonObjectType
 
 from .const import CONF_TRANSPORT, DEFAULT_TRANSPORT, DOMAIN, TRANSPORT_STREAMABLE_HTTP
@@ -35,6 +36,7 @@ TokenManager = Callable[[], Awaitable[str]]
 
 @asynccontextmanager
 async def mcp_client(
+    hass: HomeAssistant,
     url: str,
     token_manager: TokenManager | None = None,
     transport: str = DEFAULT_TRANSPORT,
@@ -48,17 +50,42 @@ async def mcp_client(
     if token_manager is not None:
         token = await token_manager()
         headers["Authorization"] = f"Bearer {token}"
+
+    ssl_context = await hass.async_add_executor_job(hass_ssl.client_context)
+
+    def httpx_client_factory(
+        *,
+        headers: dict[str, str] | None = None,
+        timeout: httpx.Timeout | None = None,
+        auth: httpx.Auth | None = None,
+    ) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            headers=headers,
+            timeout=timeout,
+            auth=auth,
+            follow_redirects=True,
+            verify=ssl_context,
+        )
+
     try:
         if transport == TRANSPORT_STREAMABLE_HTTP:
             async with (
-                streamablehttp_client(url=url, headers=headers) as streams,
+                streamablehttp_client(
+                    url=url,
+                    headers=headers,
+                    httpx_client_factory=httpx_client_factory,
+                ) as streams,
                 ClientSession(*streams[:2]) as session,
             ):
                 await session.initialize()
                 yield session
         else:
             async with (
-                sse_client(url=url, headers=headers) as streams,
+                sse_client(
+                    url=url,
+                    headers=headers,
+                    httpx_client_factory=httpx_client_factory,
+                ) as streams,
                 ClientSession(*streams) as session,
             ):
                 await session.initialize()
@@ -98,6 +125,7 @@ class ModelContextProtocolTool(llm.Tool):
         try:
             async with asyncio.timeout(TIMEOUT):
                 async with mcp_client(
+                    hass,
                     self.server_url,
                     self.token_manager,
                     self.transport,
@@ -147,6 +175,7 @@ class ModelContextProtocolCoordinator(DataUpdateCoordinator[list[llm.Tool]]):
         try:
             async with asyncio.timeout(TIMEOUT):
                 async with mcp_client(
+                    self.hass,
                     self.config_entry.data[CONF_URL],
                     self.token_manager,
                     self.config_entry.data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT),
