@@ -51,6 +51,7 @@ async def mcp_client(
     url_obj = URL(url)
     query = dict(url_obj.query)
     api_key = query.pop("api_key", None)
+    # Remove any API key from the URL so we do not log it later
     url = str(url_obj.with_query(query))
     if api_key is not None:
         headers["Authorization"] = f"Bearer {api_key}"
