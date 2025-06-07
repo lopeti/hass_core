@@ -59,6 +59,12 @@ async def mcp_client(
         token = await token_manager()
         headers["Authorization"] = f"Bearer {token}"
 
+    if transport == TRANSPORT_STREAMABLE_HTTP:
+        headers.setdefault("Accept", "text/event-stream, application/json")
+        headers.setdefault("Content-Type", "application/json")
+    else:
+        headers.setdefault("Accept", "text/event-stream")
+
     ssl_context = await hass.async_add_executor_job(hass_ssl.client_context)
 
     def httpx_client_factory(
