@@ -121,14 +121,18 @@ async def validate_input(
     """Validate the user input and connect to the MCP server."""
     url = data[CONF_URL]
     transport = data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT)
+    url_obj = URL(url)
+    query = dict(url_obj.query)
+    api_key = query.pop("api_key", None)
+    sanitized_url = str(url_obj.with_query(query))
     attempt_log_msg = (
         "Validating MCP server connection: url=%s, transport=%s, auth_header=%s"
     )
     _LOGGER.debug(
         attempt_log_msg,
-        url,
+        sanitized_url,
         transport,
-        "yes" if token_manager is not None else "no",
+        "yes" if token_manager is not None or api_key is not None else "no",
     )
     try:
         cv.url(url)  # Cannot be added to schema directly
