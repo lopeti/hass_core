@@ -25,6 +25,7 @@ from homeassistant.helpers.config_entry_oauth2_flow import (
     AbstractOAuth2FlowHandler,
     async_get_implementations,
 )
+from homeassistant.util import ssl as hass_ssl
 
 from . import async_get_config_entry_implementation
 from .application_credentials import authorization_server_context
@@ -72,8 +73,18 @@ async def async_discover_oauth_config(
     """
     parsed_url = URL(mcp_server_url)
     discovery_endpoint = str(parsed_url.with_path(OAUTH_DISCOVERY_ENDPOINT))
+    ssl_context = await hass.async_add_executor_job(hass_ssl.client_context)
     try:
-        async with httpx.AsyncClient(headers=MCP_DISCOVERY_HEADERS) as client:
+        async with httpx.AsyncClient(
+            headers=MCP_DISCOVERY_HEADERS,
+            follow_redirects=True,
+            verify=ssl_context,
+        ) as client:
+            _LOGGER.debug(
+                "MCP connection test: url=%s transport=discovery headers=%s",
+                discovery_endpoint,
+                list(MCP_DISCOVERY_HEADERS.keys()),
+            )
             response = await client.get(discovery_endpoint)
             response.raise_for_status()
     except httpx.TimeoutException as error:
