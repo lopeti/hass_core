@@ -147,25 +147,29 @@ async def validate_input(
         ) as session:
             response = await session.initialize()
             _LOGGER.debug(
-                "MCP server info for %s: name=%s", url, response.serverInfo.name
+                "MCP server info for %s: name=%s",
+                sanitized_url,
+                response.serverInfo.name,
             )
     except httpx.TimeoutException as error:
-        _LOGGER.info("Timeout connecting to MCP server %s: %s", url, error)
+        _LOGGER.info("Timeout connecting to MCP server %s: %s", sanitized_url, error)
         raise TimeoutConnectError from error
     except httpx.HTTPStatusError as error:
         _LOGGER.info(
-            "Cannot connect to MCP server %s: HTTP %s", url, error.response.status_code
+            "Cannot connect to MCP server %s: HTTP %s",
+            sanitized_url,
+            error.response.status_code,
         )
         if error.response.status_code == 401:
             raise InvalidAuth from error
         raise CannotConnect from error
     except httpx.HTTPError as error:
-        _LOGGER.info("Cannot connect to MCP server %s: %s", url, error)
+        _LOGGER.info("Cannot connect to MCP server %s: %s", sanitized_url, error)
         raise CannotConnect from error
 
     if not response.capabilities.tools:
         raise MissingCapabilities(
-            f"MCP Server {url} does not support 'Tools' capability"
+            f"MCP Server {sanitized_url} does not support 'Tools' capability"
         )
 
     return {"title": response.serverInfo.name}
