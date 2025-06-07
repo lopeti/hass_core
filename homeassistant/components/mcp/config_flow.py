@@ -111,7 +111,10 @@ async def validate_input(
         raise InvalidUrl from error
     try:
         async with mcp_client(
-            url, token_manager=token_manager, transport=transport
+            hass,
+            url,
+            token_manager=token_manager,
+            transport=transport,
         ) as session:
             response = await session.initialize()
     except httpx.TimeoutException as error:
