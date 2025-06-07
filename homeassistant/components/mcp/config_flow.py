@@ -23,7 +23,16 @@ from homeassistant.helpers.config_entry_oauth2_flow import (
 
 from . import async_get_config_entry_implementation
 from .application_credentials import authorization_server_context
-from .const import CONF_ACCESS_TOKEN, CONF_AUTHORIZATION_URL, CONF_TOKEN_URL, DOMAIN
+from .const import (
+    CONF_ACCESS_TOKEN,
+    CONF_AUTHORIZATION_URL,
+    CONF_TOKEN_URL,
+    CONF_TRANSPORT,
+    DEFAULT_TRANSPORT,
+    DOMAIN,
+    TRANSPORT_SSE,
+    TRANSPORT_STREAMABLE_HTTP,
+)
 from .coordinator import TokenManager, mcp_client
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,6 +40,9 @@ _LOGGER = logging.getLogger(__name__)
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_URL): str,
+        vol.Optional(CONF_TRANSPORT, default=DEFAULT_TRANSPORT): vol.In(
+            [TRANSPORT_SSE, TRANSPORT_STREAMABLE_HTTP]
+        ),
     }
 )
 
@@ -92,12 +104,15 @@ async def validate_input(
 ) -> dict[str, Any]:
     """Validate the user input and connect to the MCP server."""
     url = data[CONF_URL]
+    transport = data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT)
     try:
         cv.url(url)  # Cannot be added to schema directly
     except vol.Invalid as error:
         raise InvalidUrl from error
     try:
-        async with mcp_client(url, token_manager=token_manager) as session:
+        async with mcp_client(
+            url, token_manager=token_manager, transport=transport
+        ) as session:
             response = await session.initialize()
     except httpx.TimeoutException as error:
         _LOGGER.info("Timeout connecting to MCP server: %s", error)
@@ -147,6 +162,9 @@ class ModelContextProtocolConfigFlow(AbstractOAuth2FlowHandler, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
                 self.data[CONF_URL] = user_input[CONF_URL]
+                self.data[CONF_TRANSPORT] = user_input.get(
+                    CONF_TRANSPORT, DEFAULT_TRANSPORT
+                )
                 return await self.async_step_auth_discovery()
             except MissingCapabilities:
                 return self.async_abort(reason="missing_capabilities")
