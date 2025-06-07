@@ -11,9 +11,14 @@ import voluptuous as vol
 from yarl import URL
 
 from homeassistant.components.application_credentials import AuthorizationServer
-from homeassistant.config_entries import SOURCE_REAUTH, ConfigFlowResult
+from homeassistant.config_entries import (
+    SOURCE_REAUTH,
+    ConfigEntry,
+    ConfigFlowResult,
+    OptionsFlow,
+)
 from homeassistant.const import CONF_TOKEN, CONF_URL
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.config_entry_oauth2_flow import (
@@ -111,7 +116,10 @@ async def validate_input(
         raise InvalidUrl from error
     try:
         async with mcp_client(
-            url, token_manager=token_manager, transport=transport
+            hass,
+            url,
+            token_manager=token_manager,
+            transport=transport,
         ) as session:
             response = await session.initialize()
     except httpx.TimeoutException as error:
@@ -302,6 +310,42 @@ class ModelContextProtocolConfigFlow(AbstractOAuth2FlowHandler, domain=DOMAIN):
             self.hass, config_entry
         )
         return await self.async_step_auth()
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Return the options flow handler."""
+        return ModelContextProtocolOptionsFlow(config_entry)
+
+
+class ModelContextProtocolOptionsFlow(OptionsFlow):
+    """Handle MCP integration options."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage the MCP options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current_transport = self.config_entry.options.get(
+            CONF_TRANSPORT,
+            self.config_entry.data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT),
+        )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_TRANSPORT, default=current_transport): vol.In(
+                        [TRANSPORT_SSE, TRANSPORT_STREAMABLE_HTTP]
+                    )
+                }
+            ),
+        )
 
 
 class InvalidUrl(HomeAssistantError):
