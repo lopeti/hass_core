@@ -178,7 +178,10 @@ class ModelContextProtocolCoordinator(DataUpdateCoordinator[list[llm.Tool]]):
                     self.hass,
                     self.config_entry.data[CONF_URL],
                     self.token_manager,
-                    self.config_entry.data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT),
+                    self.config_entry.options.get(
+                        CONF_TRANSPORT,
+                        self.config_entry.data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT),
+                    ),
                 ) as session:
                     result = await session.list_tools()
         except TimeoutError as error:
@@ -211,7 +214,10 @@ class ModelContextProtocolCoordinator(DataUpdateCoordinator[list[llm.Tool]]):
                     parameters,
                     self.config_entry.data[CONF_URL],
                     self.token_manager,
-                    self.config_entry.data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT),
+                    self.config_entry.options.get(
+                        CONF_TRANSPORT,
+                        self.config_entry.data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT),
+                    ),
                 )
             )
         return tools
