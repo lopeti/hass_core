@@ -50,14 +50,13 @@ async def mcp_client(
     """
     headers: dict[str, str] = {}
     if api_key is not None:
-        headers["Authorization"] = f"Bearer {api_key}"
-        _LOGGER.debug("MCP client using API key")
+        _LOGGER.debug("MCP client using API key from query string")
     elif token_manager is not None:
         token = await token_manager()
         headers["Authorization"] = f"Bearer {token}"
 
     if transport == TRANSPORT_STREAMABLE_HTTP:
-        headers.setdefault("Accept", "text/event-stream, application/json")
+        headers.setdefault("Accept", "application/json, text/event-stream")
         headers.setdefault("Content-Type", "application/json")
         headers.setdefault("Origin", url)
         headers.setdefault("Referer", url)

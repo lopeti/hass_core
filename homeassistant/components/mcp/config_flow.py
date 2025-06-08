@@ -147,7 +147,6 @@ async def validate_input(
             async with httpx.AsyncClient(
                 headers={
                     "Accept": "application/json, text/event-stream",
-                    "Authorization": f"Bearer {api_key}",
                     "Origin": url,
                     "Referer": url,
                     "User-Agent": "Mozilla/5.0",
