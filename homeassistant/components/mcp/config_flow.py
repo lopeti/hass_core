@@ -141,7 +141,8 @@ async def validate_input(
     try:
         async with mcp_client(
             hass,
-            url,
+            sanitized_url,
+            api_key=api_key,
             token_manager=token_manager,
             transport=transport,
         ) as session:

@@ -14,7 +14,6 @@ from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel
 import voluptuous as vol
 from voluptuous_openapi import convert_to_voluptuous
-from yarl import URL
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_URL
@@ -39,6 +38,8 @@ TokenManager = Callable[[], Awaitable[str]]
 async def mcp_client(
     hass: HomeAssistant,
     url: str,
+    *,
+    api_key: str | None = None,
     token_manager: TokenManager | None = None,
     transport: str = DEFAULT_TRANSPORT,
 ) -> AsyncGenerator[ClientSession]:
@@ -48,14 +49,9 @@ async def mcp_client(
     that the coordinator has a single object to manage.
     """
     headers: dict[str, str] = {}
-    url_obj = URL(url)
-    query = dict(url_obj.query)
-    api_key = query.pop("api_key", None)
-    # Remove any API key from the URL so we do not log it later
-    url = str(url_obj.with_query(query))
     if api_key is not None:
         headers["Authorization"] = f"Bearer {api_key}"
-        _LOGGER.debug("MCP client using API key from query string")
+        _LOGGER.debug("MCP client using API key")
     elif token_manager is not None:
         token = await token_manager()
         headers["Authorization"] = f"Bearer {token}"
@@ -154,8 +150,8 @@ class ModelContextProtocolTool(llm.Tool):
                 async with mcp_client(
                     hass,
                     self.server_url,
-                    self.token_manager,
-                    self.transport,
+                    token_manager=self.token_manager,
+                    transport=self.transport,
                 ) as session:
                     result: BaseModel = await session.call_tool(
                         tool_input.tool_name, tool_input.tool_args
@@ -204,8 +200,8 @@ class ModelContextProtocolCoordinator(DataUpdateCoordinator[list[llm.Tool]]):
                 async with mcp_client(
                     self.hass,
                     self.config_entry.data[CONF_URL],
-                    self.token_manager,
-                    self.config_entry.options.get(
+                    token_manager=self.token_manager,
+                    transport=self.config_entry.options.get(
                         CONF_TRANSPORT,
                         self.config_entry.data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT),
                     ),
