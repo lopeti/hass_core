@@ -146,7 +146,7 @@ async def validate_input(
         try:
             async with httpx.AsyncClient(
                 headers={
-                    "Accept": "text/event-stream",
+                    "Accept": "text/event-stream, application/json",
                     "Authorization": f"Bearer {api_key}",
                 },
                 verify=ssl_context,
