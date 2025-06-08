@@ -125,6 +125,7 @@ async def validate_input(
     query = dict(url_obj.query)
     api_key = query.pop("api_key", None)
     sanitized_url = str(url_obj.with_query(query))
+    sse_url = url
     attempt_log_msg = (
         "Validating MCP server connection: url=%s, transport=%s, auth_header=%s"
     )
@@ -144,15 +145,13 @@ async def validate_input(
         ssl_context = await hass.async_add_executor_job(hass_ssl.client_context)
         try:
             async with httpx.AsyncClient(
-                follow_redirects=True, verify=ssl_context
+                headers={
+                    "Accept": "text/event-stream",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                verify=ssl_context,
             ) as sse_client:
-                await sse_client.get(
-                    sanitized_url,
-                    headers={
-                        "Accept": "text/event-stream",
-                        "Authorization": f"Bearer {api_key}",
-                    },
-                )
+                await sse_client.get(sse_url)
         except httpx.HTTPError as error:
             _LOGGER.debug("MCP connection test SSE GET failed: %s", error)
     try:
