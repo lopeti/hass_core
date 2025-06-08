@@ -138,6 +138,23 @@ async def validate_input(
         cv.url(url)  # Cannot be added to schema directly
     except vol.Invalid as error:
         raise InvalidUrl from error
+
+    # Pre open the SSE endpoint for Streamable HTTP to mimic Inspector
+    if transport == TRANSPORT_STREAMABLE_HTTP and api_key is not None:
+        ssl_context = await hass.async_add_executor_job(hass_ssl.client_context)
+        try:
+            async with httpx.AsyncClient(
+                follow_redirects=True, verify=ssl_context
+            ) as sse_client:
+                await sse_client.get(
+                    sanitized_url,
+                    headers={
+                        "Accept": "text/event-stream",
+                        "Authorization": f"Bearer {api_key}",
+                    },
+                )
+        except httpx.HTTPError as error:
+            _LOGGER.debug("MCP connection test SSE GET failed: %s", error)
     try:
         async with mcp_client(
             hass,

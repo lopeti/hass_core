@@ -59,6 +59,9 @@ async def mcp_client(
     if transport == TRANSPORT_STREAMABLE_HTTP:
         headers.setdefault("Accept", "text/event-stream, application/json")
         headers.setdefault("Content-Type", "application/json")
+        headers.setdefault("Origin", url)
+        headers.setdefault("Referer", url)
+        headers.setdefault("Connection", "keep-alive")
     else:
         headers.setdefault("Accept", "text/event-stream")
 
