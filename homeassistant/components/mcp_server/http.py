@@ -18,7 +18,7 @@ import logging
 
 from aiohttp import web
 from aiohttp.web_exceptions import HTTPBadRequest, HTTPNotFound
-from aiohttp_sse import sse_response
+from aiohttp_sse import EventSourceResponse, sse_response
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp import types
@@ -108,9 +108,10 @@ class ModelContextProtocolSSEView(HomeAssistantView):
         write_stream, write_stream_reader = anyio.create_memory_object_stream(0)
 
         async with (
-            sse_response(request) as response,
+            sse_response(request) as resp,
             session_manager.create(Session(read_stream_writer)) as session_id,
         ):
+            response: EventSourceResponse = resp
             session_uri = MESSAGES_API.format(session_id=session_id)
             _LOGGER.debug("Sending SSE endpoint: %s", session_uri)
             await response.send(session_uri, event="endpoint")
@@ -124,10 +125,16 @@ class ModelContextProtocolSSEView(HomeAssistantView):
                         event="message",
                     )
 
-            async with anyio.create_task_group() as tg:
-                tg.start_soon(sse_reader)
-                await server.run(read_stream, write_stream, options)
-                return response
+            try:
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(sse_reader)
+                    await server.run(read_stream, write_stream, options)
+                    return response
+            except ExceptionGroup as err:
+                for exc in err.exceptions:
+                    if not isinstance(exc, anyio.BrokenResourceError):
+                        raise exc from None
+                raise
 
 
 class ModelContextProtocolMessagesView(HomeAssistantView):

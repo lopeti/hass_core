@@ -5,10 +5,13 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 import datetime
 import logging
+from typing import cast
 
 import httpx
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
+from pydantic import BaseModel
 import voluptuous as vol
 from voluptuous_openapi import convert_to_voluptuous
 
@@ -18,9 +21,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import llm
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import ssl as hass_ssl
 from homeassistant.util.json import JsonObjectType
 
-from .const import DOMAIN
+from .const import CONF_TRANSPORT, DEFAULT_TRANSPORT, DOMAIN, TRANSPORT_STREAMABLE_HTTP
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,25 +36,81 @@ TokenManager = Callable[[], Awaitable[str]]
 
 @asynccontextmanager
 async def mcp_client(
+    hass: HomeAssistant,
     url: str,
+    *,
+    api_key: str | None = None,
     token_manager: TokenManager | None = None,
+    transport: str = DEFAULT_TRANSPORT,
 ) -> AsyncGenerator[ClientSession]:
-    """Create a server-sent event MCP client.
+    """Create a MCP client using the configured transport.
 
-    This is an asynccontext manager that exists to wrap other async context managers
-    so that the coordinator has a single object to manage.
+    This is an async context manager that wraps other async context managers so
+    that the coordinator has a single object to manage.
     """
     headers: dict[str, str] = {}
-    if token_manager is not None:
+    if api_key is not None:
+        _LOGGER.debug("MCP client using API key from query string")
+    elif token_manager is not None:
         token = await token_manager()
         headers["Authorization"] = f"Bearer {token}"
+
+    if transport == TRANSPORT_STREAMABLE_HTTP:
+        headers.setdefault("Accept", "application/json, text/event-stream")
+        headers.setdefault("Content-Type", "application/json")
+        headers.setdefault("Origin", url)
+        headers.setdefault("Referer", url)
+        headers.setdefault("User-Agent", "Mozilla/5.0")
+        headers.setdefault("Connection", "keep-alive")
+        headers.setdefault("Cache-Control", "no-cache")
+        headers.setdefault("Pragma", "no-cache")
+        headers.setdefault("Accept-Language", "en-US,en;q=0.9")
+    else:
+        headers.setdefault("Accept", "text/event-stream")
+
+    ssl_context = await hass.async_add_executor_job(hass_ssl.client_context)
+
+    def httpx_client_factory(
+        *,
+        headers: dict[str, str] | None = None,
+        timeout: httpx.Timeout | None = None,
+        auth: httpx.Auth | None = None,
+    ) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            headers=headers,
+            timeout=timeout,
+            auth=auth,
+            follow_redirects=True,
+            verify=ssl_context,
+        )
+
     try:
-        async with (
-            sse_client(url=url, headers=headers) as streams,
-            ClientSession(*streams) as session,
-        ):
-            await session.initialize()
-            yield session
+        _LOGGER.debug(
+            "MCP connection test: url=%s transport=%s headers=%s",
+            url,
+            transport,
+            list(headers.keys()),
+        )
+        if transport == TRANSPORT_STREAMABLE_HTTP:
+            async with (
+                streamablehttp_client(
+                    url=url,
+                    headers=headers,
+                    httpx_client_factory=httpx_client_factory,
+                ) as streams,
+                ClientSession(*streams[:2]) as session,
+            ):
+                yield session
+        else:
+            async with (
+                sse_client(
+                    url=url,
+                    headers=headers,
+                    httpx_client_factory=httpx_client_factory,
+                ) as streams,
+                ClientSession(*streams) as session,
+            ):
+                yield session
     except ExceptionGroup as err:
         _LOGGER.debug("Error creating MCP client: %s", err)
         raise err.exceptions[0] from err
@@ -66,6 +126,7 @@ class ModelContextProtocolTool(llm.Tool):
         parameters: vol.Schema,
         server_url: str,
         token_manager: TokenManager | None = None,
+        transport: str = DEFAULT_TRANSPORT,
     ) -> None:
         """Initialize the tool."""
         self.name = name
@@ -73,6 +134,7 @@ class ModelContextProtocolTool(llm.Tool):
         self.parameters = parameters
         self.server_url = server_url
         self.token_manager = token_manager
+        self.transport = transport
 
     async def async_call(
         self,
@@ -83,8 +145,14 @@ class ModelContextProtocolTool(llm.Tool):
         """Call the tool."""
         try:
             async with asyncio.timeout(TIMEOUT):
-                async with mcp_client(self.server_url, self.token_manager) as session:
-                    result = await session.call_tool(
+                async with mcp_client(
+                    hass,
+                    self.server_url,
+                    token_manager=self.token_manager,
+                    transport=self.transport,
+                ) as session:
+                    await session.initialize()
+                    result: BaseModel = await session.call_tool(
                         tool_input.tool_name, tool_input.tool_args
                     )
         except TimeoutError as error:
@@ -93,7 +161,10 @@ class ModelContextProtocolTool(llm.Tool):
         except httpx.HTTPStatusError as error:
             _LOGGER.debug("Error when calling tool: %s", error)
             raise HomeAssistantError(f"Error when calling tool: {error}") from error
-        return result.model_dump(exclude_unset=True, exclude_none=True)
+        return cast(
+            JsonObjectType,
+            result.model_dump(exclude_unset=True, exclude_none=True),
+        )
 
 
 class ModelContextProtocolCoordinator(DataUpdateCoordinator[list[llm.Tool]]):
@@ -126,8 +197,15 @@ class ModelContextProtocolCoordinator(DataUpdateCoordinator[list[llm.Tool]]):
         try:
             async with asyncio.timeout(TIMEOUT):
                 async with mcp_client(
-                    self.config_entry.data[CONF_URL], self.token_manager
+                    self.hass,
+                    self.config_entry.data[CONF_URL],
+                    token_manager=self.token_manager,
+                    transport=self.config_entry.options.get(
+                        CONF_TRANSPORT,
+                        self.config_entry.data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT),
+                    ),
                 ) as session:
+                    await session.initialize()
                     result = await session.list_tools()
         except TimeoutError as error:
             _LOGGER.debug("Timeout when listing tools: %s", error)
@@ -159,6 +237,10 @@ class ModelContextProtocolCoordinator(DataUpdateCoordinator[list[llm.Tool]]):
                     parameters,
                     self.config_entry.data[CONF_URL],
                     self.token_manager,
+                    self.config_entry.options.get(
+                        CONF_TRANSPORT,
+                        self.config_entry.data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT),
+                    ),
                 )
             )
         return tools

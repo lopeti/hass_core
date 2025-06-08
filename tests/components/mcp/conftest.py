@@ -14,6 +14,8 @@ from homeassistant.components.mcp.const import (
     CONF_ACCESS_TOKEN,
     CONF_AUTHORIZATION_URL,
     CONF_TOKEN_URL,
+    CONF_TRANSPORT,
+    DEFAULT_TRANSPORT,
     DOMAIN,
 )
 from homeassistant.const import CONF_TOKEN, CONF_URL
@@ -45,6 +47,7 @@ def mock_mcp_client() -> Generator[AsyncMock]:
     """Fixture to mock the MCP client."""
     with (
         patch("homeassistant.components.mcp.coordinator.sse_client"),
+        patch("homeassistant.components.mcp.coordinator.streamablehttp_client"),
         patch("homeassistant.components.mcp.coordinator.ClientSession") as mock_session,
         patch("homeassistant.components.mcp.coordinator.TIMEOUT", 1),
     ):
@@ -56,7 +59,7 @@ def mock_config_entry(hass: HomeAssistant) -> MockConfigEntry:
     """Fixture to load the integration."""
     config_entry = MockConfigEntry(
         domain=DOMAIN,
-        data={CONF_URL: "http://1.1.1.1/sse"},
+        data={CONF_URL: "http://1.1.1.1/sse", CONF_TRANSPORT: DEFAULT_TRANSPORT},
         title=TEST_API_NAME,
     )
     config_entry.add_to_hass(hass)
@@ -95,6 +98,7 @@ def mock_config_entry_with_auth(
             CONF_URL: MCP_SERVER_URL,
             CONF_AUTHORIZATION_URL: OAUTH_AUTHORIZE_URL,
             CONF_TOKEN_URL: OAUTH_TOKEN_URL,
+            CONF_TRANSPORT: DEFAULT_TRANSPORT,
             CONF_TOKEN: {
                 CONF_ACCESS_TOKEN: "test-access-token",
                 "refresh_token": "test-refresh-token",
