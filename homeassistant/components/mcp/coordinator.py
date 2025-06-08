@@ -100,10 +100,6 @@ async def mcp_client(
                 ) as streams,
                 ClientSession(*streams[:2]) as session,
             ):
-                response = await session.initialize()
-                _LOGGER.debug(
-                    "MCP server info for %s: name=%s", url, response.serverInfo.name
-                )
                 yield session
         else:
             async with (
@@ -114,10 +110,6 @@ async def mcp_client(
                 ) as streams,
                 ClientSession(*streams) as session,
             ):
-                response = await session.initialize()
-                _LOGGER.debug(
-                    "MCP server info for %s: name=%s", url, response.serverInfo.name
-                )
                 yield session
     except ExceptionGroup as err:
         _LOGGER.debug("Error creating MCP client: %s", err)
@@ -159,6 +151,7 @@ class ModelContextProtocolTool(llm.Tool):
                     token_manager=self.token_manager,
                     transport=self.transport,
                 ) as session:
+                    await session.initialize()
                     result: BaseModel = await session.call_tool(
                         tool_input.tool_name, tool_input.tool_args
                     )
@@ -212,6 +205,7 @@ class ModelContextProtocolCoordinator(DataUpdateCoordinator[list[llm.Tool]]):
                         self.config_entry.data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT),
                     ),
                 ) as session:
+                    await session.initialize()
                     result = await session.list_tools()
         except TimeoutError as error:
             _LOGGER.debug("Timeout when listing tools: %s", error)
