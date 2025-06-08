@@ -148,6 +148,13 @@ async def validate_input(
                 headers={
                     "Accept": "application/json, text/event-stream",
                     "Authorization": f"Bearer {api_key}",
+                    "Origin": url,
+                    "Referer": url,
+                    "User-Agent": "Mozilla/5.0",
+                    "Connection": "keep-alive",
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
+                    "Accept-Language": "en-US,en;q=0.9",
                 },
                 verify=ssl_context,
             ) as sse_client:
@@ -157,7 +164,7 @@ async def validate_input(
     try:
         async with mcp_client(
             hass,
-            sanitized_url,
+            url,
             api_key=api_key,
             token_manager=token_manager,
             transport=transport,

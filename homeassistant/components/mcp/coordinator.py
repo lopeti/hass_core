@@ -61,7 +61,11 @@ async def mcp_client(
         headers.setdefault("Content-Type", "application/json")
         headers.setdefault("Origin", url)
         headers.setdefault("Referer", url)
+        headers.setdefault("User-Agent", "Mozilla/5.0")
         headers.setdefault("Connection", "keep-alive")
+        headers.setdefault("Cache-Control", "no-cache")
+        headers.setdefault("Pragma", "no-cache")
+        headers.setdefault("Accept-Language", "en-US,en;q=0.9")
     else:
         headers.setdefault("Accept", "text/event-stream")
 
