@@ -38,6 +38,8 @@ TokenManager = Callable[[], Awaitable[str]]
 async def mcp_client(
     hass: HomeAssistant,
     url: str,
+    *,
+    api_key: str | None = None,
     token_manager: TokenManager | None = None,
     transport: str = DEFAULT_TRANSPORT,
 ) -> AsyncGenerator[ClientSession]:
@@ -47,9 +49,25 @@ async def mcp_client(
     that the coordinator has a single object to manage.
     """
     headers: dict[str, str] = {}
-    if token_manager is not None:
+    if api_key is not None:
+        headers["Authorization"] = f"Bearer {api_key}"
+        _LOGGER.debug("MCP client using API key from query string")
+    elif token_manager is not None:
         token = await token_manager()
         headers["Authorization"] = f"Bearer {token}"
+
+    if transport == TRANSPORT_STREAMABLE_HTTP:
+        headers.setdefault("Accept", "application/json, text/event-stream")
+        headers.setdefault("Content-Type", "application/json")
+        headers.setdefault("Origin", url)
+        headers.setdefault("Referer", url)
+        headers.setdefault("User-Agent", "Mozilla/5.0")
+        headers.setdefault("Connection", "keep-alive")
+        headers.setdefault("Cache-Control", "no-cache")
+        headers.setdefault("Pragma", "no-cache")
+        headers.setdefault("Accept-Language", "en-US,en;q=0.9")
+    else:
+        headers.setdefault("Accept", "text/event-stream")
 
     ssl_context = await hass.async_add_executor_job(hass_ssl.client_context)
 
@@ -68,6 +86,12 @@ async def mcp_client(
         )
 
     try:
+        _LOGGER.debug(
+            "MCP connection test: url=%s transport=%s headers=%s",
+            url,
+            transport,
+            list(headers.keys()),
+        )
         if transport == TRANSPORT_STREAMABLE_HTTP:
             async with (
                 streamablehttp_client(
@@ -77,7 +101,6 @@ async def mcp_client(
                 ) as streams,
                 ClientSession(*streams[:2]) as session,
             ):
-                await session.initialize()
                 yield session
         else:
             async with (
@@ -88,7 +111,6 @@ async def mcp_client(
                 ) as streams,
                 ClientSession(*streams) as session,
             ):
-                await session.initialize()
                 yield session
     except ExceptionGroup as err:
         _LOGGER.debug("Error creating MCP client: %s", err)
@@ -127,9 +149,10 @@ class ModelContextProtocolTool(llm.Tool):
                 async with mcp_client(
                     hass,
                     self.server_url,
-                    self.token_manager,
-                    self.transport,
+                    token_manager=self.token_manager,
+                    transport=self.transport,
                 ) as session:
+                    await session.initialize()
                     result: BaseModel = await session.call_tool(
                         tool_input.tool_name, tool_input.tool_args
                     )
@@ -177,19 +200,20 @@ class ModelContextProtocolCoordinator(DataUpdateCoordinator[list[llm.Tool]]):
                 async with mcp_client(
                     self.hass,
                     self.config_entry.data[CONF_URL],
-                    self.token_manager,
-                    self.config_entry.options.get(
+                    token_manager=self.token_manager,
+                    transport=self.config_entry.options.get(
                         CONF_TRANSPORT,
                         self.config_entry.data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT),
                     ),
                 ) as session:
+                    await session.initialize()
                     result = await session.list_tools()
         except TimeoutError as error:
             _LOGGER.debug("Timeout when listing tools: %s", error)
             raise UpdateFailed(f"Timeout when listing tools: {error}") from error
         except httpx.HTTPStatusError as error:
             _LOGGER.debug("Error communicating with API: %s", error)
-            if error.response.status_code == 401 and self.token_manager is not None:
+            if error.response.status_code == 401:
                 raise ConfigEntryAuthFailed(
                     "The MCP server requires authentication"
                 ) from error

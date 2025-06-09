@@ -25,6 +25,7 @@ from homeassistant.helpers.config_entry_oauth2_flow import (
     AbstractOAuth2FlowHandler,
     async_get_implementations,
 )
+from homeassistant.util import ssl as hass_ssl
 
 from . import async_get_config_entry_implementation
 from .application_credentials import authorization_server_context
@@ -72,8 +73,18 @@ async def async_discover_oauth_config(
     """
     parsed_url = URL(mcp_server_url)
     discovery_endpoint = str(parsed_url.with_path(OAUTH_DISCOVERY_ENDPOINT))
+    ssl_context = await hass.async_add_executor_job(hass_ssl.client_context)
     try:
-        async with httpx.AsyncClient(headers=MCP_DISCOVERY_HEADERS) as client:
+        async with httpx.AsyncClient(
+            headers=MCP_DISCOVERY_HEADERS,
+            follow_redirects=True,
+            verify=ssl_context,
+        ) as client:
+            _LOGGER.debug(
+                "MCP connection test: url=%s transport=discovery headers=%s",
+                discovery_endpoint,
+                list(MCP_DISCOVERY_HEADERS.keys()),
+            )
             response = await client.get(discovery_endpoint)
             response.raise_for_status()
     except httpx.TimeoutException as error:
@@ -110,33 +121,81 @@ async def validate_input(
     """Validate the user input and connect to the MCP server."""
     url = data[CONF_URL]
     transport = data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT)
+    url_obj = URL(url)
+    query = dict(url_obj.query)
+    api_key = query.pop("api_key", None)
+    sanitized_url = str(url_obj.with_query(query))
+    sse_url = sanitized_url
+    attempt_log_msg = (
+        "Validating MCP server connection: url=%s, transport=%s, auth_header=%s"
+    )
+    _LOGGER.debug(
+        attempt_log_msg,
+        sanitized_url,
+        transport,
+        "yes" if token_manager is not None or api_key is not None else "no",
+    )
     try:
         cv.url(url)  # Cannot be added to schema directly
     except vol.Invalid as error:
         raise InvalidUrl from error
+
+    # Pre open the SSE endpoint for Streamable HTTP to mimic Inspector
+    if transport == TRANSPORT_STREAMABLE_HTTP and api_key is not None:
+        ssl_context = await hass.async_add_executor_job(hass_ssl.client_context)
+        try:
+            sse_headers = {
+                "Accept": "application/json, text/event-stream",
+                "Origin": sanitized_url,
+                "Referer": sanitized_url,
+                "User-Agent": "Mozilla/5.0",
+                "Connection": "keep-alive",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+            if api_key is not None:
+                sse_headers["Authorization"] = f"Bearer {api_key}"
+            async with httpx.AsyncClient(
+                headers=sse_headers,
+                verify=ssl_context,
+            ) as sse_client:
+                await sse_client.get(sse_url)
+        except httpx.HTTPError as error:
+            _LOGGER.debug("MCP connection test SSE GET failed: %s", error)
     try:
         async with mcp_client(
             hass,
-            url,
+            sanitized_url,
+            api_key=api_key,
             token_manager=token_manager,
             transport=transport,
         ) as session:
             response = await session.initialize()
+            _LOGGER.debug(
+                "MCP server info for %s: name=%s",
+                sanitized_url,
+                response.serverInfo.name,
+            )
     except httpx.TimeoutException as error:
-        _LOGGER.info("Timeout connecting to MCP server: %s", error)
+        _LOGGER.info("Timeout connecting to MCP server %s: %s", sanitized_url, error)
         raise TimeoutConnectError from error
     except httpx.HTTPStatusError as error:
-        _LOGGER.info("Cannot connect to MCP server: %s", error)
+        _LOGGER.info(
+            "Cannot connect to MCP server %s: HTTP %s",
+            sanitized_url,
+            error.response.status_code,
+        )
         if error.response.status_code == 401:
             raise InvalidAuth from error
         raise CannotConnect from error
     except httpx.HTTPError as error:
-        _LOGGER.info("Cannot connect to MCP server: %s", error)
+        _LOGGER.info("Cannot connect to MCP server %s: %s", sanitized_url, error)
         raise CannotConnect from error
 
     if not response.capabilities.tools:
         raise MissingCapabilities(
-            f"MCP Server {url} does not support 'Tools' capability"
+            f"MCP Server {sanitized_url} does not support 'Tools' capability"
         )
 
     return {"title": response.serverInfo.name}
@@ -315,36 +374,66 @@ class ModelContextProtocolConfigFlow(AbstractOAuth2FlowHandler, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         """Return the options flow handler."""
-        return ModelContextProtocolOptionsFlow(config_entry)
+        return ModelContextProtocolOptionsFlow()
 
 
 class ModelContextProtocolOptionsFlow(OptionsFlow):
     """Handle MCP integration options."""
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
-
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage the MCP options."""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            try:
+                await validate_input(
+                    self.hass,
+                    {
+                        CONF_URL: user_input[CONF_URL],
+                        CONF_TRANSPORT: user_input[CONF_TRANSPORT],
+                    },
+                )
+            except InvalidUrl:
+                errors[CONF_URL] = "invalid_url"
+            except TimeoutConnectError:
+                errors["base"] = "timeout_connect"
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except InvalidAuth:
+                errors["base"] = "invalid_auth"
+            except MissingCapabilities:
+                errors["base"] = "missing_capabilities"
+            except Exception:
+                _LOGGER.exception("Unexpected exception")
+                errors["base"] = "unknown"
+            else:
+                if user_input[CONF_URL] != self.config_entry.data[CONF_URL]:
+                    self.hass.config_entries.async_update_entry(
+                        self.config_entry,
+                        data={**self.config_entry.data, CONF_URL: user_input[CONF_URL]},
+                    )
+                return self.async_create_entry(
+                    title="",
+                    data={CONF_TRANSPORT: user_input[CONF_TRANSPORT]},
+                )
 
         current_transport = self.config_entry.options.get(
             CONF_TRANSPORT,
             self.config_entry.data.get(CONF_TRANSPORT, DEFAULT_TRANSPORT),
         )
+        current_url = self.config_entry.data[CONF_URL]
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
+                    vol.Required(CONF_URL, default=current_url): str,
                     vol.Required(CONF_TRANSPORT, default=current_transport): vol.In(
                         [TRANSPORT_SSE, TRANSPORT_STREAMABLE_HTTP]
-                    )
+                    ),
                 }
             ),
+            errors=errors,
         )
 
 
