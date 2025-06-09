@@ -81,7 +81,6 @@ async def test_init(
     [
         (httpx.TimeoutException("Some timeout")),
         (httpx.HTTPStatusError("", request=None, response=httpx.Response(500))),
-        (httpx.HTTPStatusError("", request=None, response=httpx.Response(401))),
         (httpx.HTTPError("Some HTTP error")),
     ],
 )
@@ -111,6 +110,25 @@ async def test_mcp_server_authentication_failure(
 
     await hass.config_entries.async_setup(config_entry_with_auth.entry_id)
     assert config_entry_with_auth.state is ConfigEntryState.SETUP_ERROR
+
+    flows = hass.config_entries.flow.async_progress()
+    assert len(flows) == 1
+    assert flows[0]["step_id"] == "reauth_confirm"
+
+
+async def test_mcp_server_authentication_failure_no_auth(
+    hass: HomeAssistant,
+    credential: None,
+    config_entry: MockConfigEntry,
+    mock_mcp_client: Mock,
+) -> None:
+    """Test the integration starts OAuth reauth when API key auth fails."""
+    mock_mcp_client.side_effect = httpx.HTTPStatusError(
+        "Authentication required", request=None, response=httpx.Response(401)
+    )
+
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    assert config_entry.state is ConfigEntryState.SETUP_ERROR
 
     flows = hass.config_entries.flow.async_progress()
     assert len(flows) == 1
