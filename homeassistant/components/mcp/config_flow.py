@@ -331,6 +331,8 @@ class ModelContextProtocolConfigFlow(AbstractOAuth2FlowHandler, domain=DOMAIN):
             return self.async_abort(reason="timeout_connect")
         except CannotConnect:
             return self.async_abort(reason="cannot_connect")
+        except InvalidAuth:
+            return self.async_abort(reason="invalid_auth")
         except MissingCapabilities:
             return self.async_abort(reason="missing_capabilities")
         except Exception:
