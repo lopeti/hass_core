@@ -50,6 +50,7 @@ async def mcp_client(
     """
     headers: dict[str, str] = {}
     if api_key is not None:
+        headers["Authorization"] = f"Bearer {api_key}"
         _LOGGER.debug("MCP client using API key from query string")
     elif token_manager is not None:
         token = await token_manager()
@@ -212,7 +213,7 @@ class ModelContextProtocolCoordinator(DataUpdateCoordinator[list[llm.Tool]]):
             raise UpdateFailed(f"Timeout when listing tools: {error}") from error
         except httpx.HTTPStatusError as error:
             _LOGGER.debug("Error communicating with API: %s", error)
-            if error.response.status_code == 401 and self.token_manager is not None:
+            if error.response.status_code == 401:
                 raise ConfigEntryAuthFailed(
                     "The MCP server requires authentication"
                 ) from error

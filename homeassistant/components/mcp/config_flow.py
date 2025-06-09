@@ -125,7 +125,7 @@ async def validate_input(
     query = dict(url_obj.query)
     api_key = query.pop("api_key", None)
     sanitized_url = str(url_obj.with_query(query))
-    sse_url = url
+    sse_url = sanitized_url
     attempt_log_msg = (
         "Validating MCP server connection: url=%s, transport=%s, auth_header=%s"
     )
@@ -144,17 +144,20 @@ async def validate_input(
     if transport == TRANSPORT_STREAMABLE_HTTP and api_key is not None:
         ssl_context = await hass.async_add_executor_job(hass_ssl.client_context)
         try:
+            sse_headers = {
+                "Accept": "application/json, text/event-stream",
+                "Origin": sanitized_url,
+                "Referer": sanitized_url,
+                "User-Agent": "Mozilla/5.0",
+                "Connection": "keep-alive",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+            if api_key is not None:
+                sse_headers["Authorization"] = f"Bearer {api_key}"
             async with httpx.AsyncClient(
-                headers={
-                    "Accept": "application/json, text/event-stream",
-                    "Origin": url,
-                    "Referer": url,
-                    "User-Agent": "Mozilla/5.0",
-                    "Connection": "keep-alive",
-                    "Cache-Control": "no-cache",
-                    "Pragma": "no-cache",
-                    "Accept-Language": "en-US,en;q=0.9",
-                },
+                headers=sse_headers,
                 verify=ssl_context,
             ) as sse_client:
                 await sse_client.get(sse_url)
@@ -163,7 +166,7 @@ async def validate_input(
     try:
         async with mcp_client(
             hass,
-            url,
+            sanitized_url,
             api_key=api_key,
             token_manager=token_manager,
             transport=transport,
