@@ -212,9 +212,9 @@ class ModelContextProtocolCoordinator(DataUpdateCoordinator[list[llm.Tool]]):
             raise UpdateFailed(f"Timeout when listing tools: {error}") from error
         except httpx.HTTPStatusError as error:
             _LOGGER.debug("Error communicating with API: %s", error)
-            if error.response.status_code == 401 and self.token_manager is not None:
+            if error.response.status_code == 401:
                 raise ConfigEntryAuthFailed(
-                    "The MCP server requires authentication"
+                    "Authentication with the MCP server failed"
                 ) from error
             raise UpdateFailed(f"Error communicating with API: {error}") from error
         except httpx.HTTPError as err:
