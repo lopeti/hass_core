@@ -184,6 +184,7 @@ async def validate_input(
             error.response.status_code,
         )
         if error.response.status_code == 401:
+            # Trigger OAuth2 discovery when API key authentication fails
             raise InvalidAuth from error
         raise CannotConnect from error
     except httpx.HTTPError as error:
@@ -332,6 +333,7 @@ class ModelContextProtocolConfigFlow(AbstractOAuth2FlowHandler, domain=DOMAIN):
         except CannotConnect:
             return self.async_abort(reason="cannot_connect")
         except InvalidAuth:
+            # OAuth credentials were rejected
             return self.async_abort(reason="invalid_auth")
         except MissingCapabilities:
             return self.async_abort(reason="missing_capabilities")
